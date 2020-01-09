@@ -1,0 +1,263 @@
+----------------------------Chat Project --------------------------
+
+-----------------------------Input Data ----------------------------
+1~hi~c
+100~hello morning, how can i help you today~a
+1~i have issues in my tv connection which is notworking~c
+100~I m really sorry about that. Tell me what happened~a
+1~heavy rain in the morning caused my stb and my tv is notworking~c
+100~let me take your request, hopefully your issue will be resolved soon~a
+
+------------------------------Code + execution results side by side ---------------------
+from __future__ import print_function
+from pyspark.sql import Row
+from pyspark.sql import SparkSession
+from pyspark import SparkConf
+from pyspark.sql import SparkSession, HiveContext
+from pyspark.sql.types import *
+from pyspark.sql.functions import explode
+#spark = SparkSession.builder.getOrCreate()
+spark = SparkSession.builder.enableHiveSupport().getOrCreate()
+print("\n\n\n CHAT PROJECT \n")
+#Define the column names as id,chat,type
+udschema = StructType([StructField("ID",StringType(), True),
+StructField("CHAT",StringType(), True),
+StructField("TYPE",StringType(), True)])
+#Load the chat data into a Dataframe using ~ delimiter.
+hadooplines = spark.sparkContext.textFile("file:/home/hduser/latha/chattext.txt")
+parts = hadooplines.map(lambda l: l.split("~"))
+#Define the column names as id,chat,type
+#chatline = parts.map(lambda p: Row(ID = p[0],CHAT = p[1],TYPE = p[2]))
+#DF = spark.createDataFrame(parts,udschema)
+#DF = spark.createDataFrame(chatline)
+#Filter only the records contains type as c (which is the customer interactions)
+chatlinetypec = parts.filter(lambda l: l[2].upper() == 'C')
+DF = spark.createDataFrame(chatlinetypec,udschema)
+DF.show()
+
++---+--------------------+----+
+| ID|                CHAT|TYPE|
++---+--------------------+----+
+|  1|                  hi|   c|
+|  1|i have issues in ...|   c|
+|  1|heavy rain in the...|   c|
++---+--------------------+----+
+
+#Remove the column type from the above dataframe, hence the resultant dataframe contains
+#only id and chat
+DF1 = DF.drop('TYPE')
+#convert to tempview
+DF1.createOrReplaceTempView("ChatTempView")
+
+
+## Use SQL split function on the chat column with the delimiter as space
+chat_split =spark.sql("SELECT ID, split(CHAT,' ') AS SPCHAT from ChatTempView")
+chat_split.show()
+
++---+--------------------+
+| ID|              SPCHAT|
++---+--------------------+
+|  1|                [hi]|
+|  1|[i, have, issues,...|
+|  1|[heavy, rain, in,...|
++---+--------------------+
+
+Exp_chat_split_DF = chat_split.select(chat_split.ID, explode(chat_split.SPCHAT))
+Exp_chat_split_DF.createOrReplaceTempView("ExpChatTempView")
+ECTP = spark.sql("SELECT * FROM ExpChatTempView")
+ECTP.show()
+
++---+----------+
+| ID|       col|
++---+----------+
+|  1|        hi|
+|  1|         i|
+|  1|      have|
+|  1|    issues|
+|  1|        in|
+|  1|        my|
+|  1|        tv|
+|  1|connection|
+|  1|     which|
+|  1|        is|
+|  1|notworking|
+|  1|     heavy|
+|  1|      rain|
+|  1|        in|
+|  1|       the|
+|  1|   morning|
+|  1|    caused|
+|  1|        my|
+|  1|       stb|
+|  1|       and|
++---+----------+
+only showing top 20 rows
+
+#Load the stopwords into dataframe with the column name stopword and convert to tempview
+#stopwordRDD = spark.sparkContext.textFile("file:/home/hduser/latha/Stopwords.txt")
+swschema = StructType([StructField("STOPWORD",StringType(), True)])
+#stopwordDF = spark.createDataFrame(stopwordRDD,swschema)
+stopwordDF = spark.read.load("file:/home/hduser/latha/Stopwords.csv",format="csv",header="False",schema=swschema)
+stopwordDF.createOrReplaceTempView("StopwordView")
+SWDF = spark.sql("SELECT * FROM StopwordView")
+SWDF.show()
+
++--------+
+|STOPWORD|
++--------+
+|       a|
+|   about|
+|   above|
+|  across|
+|   after|
+|   again|
+| against|
+|     all|
+|  almost|
+|   alone|
+|   along|
+| already|
+|    also|
+|although|
+|  always|
+|   among|
+|      an|
+|     and|
+| another|
+|     any|
++--------+
+only showing top 20 rows
+
+#Write a left outer join between chat tempview and stopwords tempview and filter all nulls (or) use
+#subquery with not in option to filter all stop words from the actual chat tempview using the
+#stopwords tempview created above.
+CleanChat = spark.sql("SELECT * FROM ExpChatTempView where col NOT IN (SELECT * FROM StopwordView)")
+CleanChat.show()
+
++---+----------+
+| ID|       col|
++---+----------+
+|  1|        hi|
+|  1|    issues|
+|  1|        tv|
+|  1|connection|
+|  1|notworking|
+|  1|     heavy|
+|  1|      rain|
+|  1|   morning|
+|  1|    caused|
+|  1|       stb|
+|  1|        tv|
+|  1|notworking|
++---+----------+
+
+#Load the final result into a hive table should have only result as given below using append option
+spark.sql("show databases").show()
+spark.sql("use sparkdb")
+spark.sql("drop table if exists Finalchat")
+spark.sql("create table if not exists Finalchat AS SELECT * FROM ExpChatTempView where col NOT IN (SELECT * FROM StopwordView)")
+spark.sql("SELECT * FROM Finalchat").show()
+
++---+----------+
+| id|       col|
++---+----------+
+|  1|        hi|
+|  1|    issues|
+|  1|        tv|
+|  1|connection|
+|  1|notworking|
+|  1|     heavy|
+|  1|      rain|
+|  1|   morning|
+|  1|    caused|
+|  1|       stb|
+|  1|        tv|
+|  1|notworking|
++---+----------+
+
+#Identify the most recurring keywords used by the customer in all the chats by grouping based on
+#the keywords used with count of keywords. use group by and count functions in the sql
+spark.sql("SELECT count(id), col FROM Finalchat GROUP BY col").show()
+
++---------+----------+
+|count(id)|       col|
++---------+----------+
+|        1|       stb|
+|        2|        tv|
+|        1|    issues|
+|        1|      rain|
+|        1|   morning|
+|        2|notworking|
+|        1|     heavy|
+|        1|connection|
+|        1|        hi|
+|        1|    caused|
++---------+----------+
+
+
+-------------------------------------------Full Code for Pyspark's Chat Project - chatproj.py -------------------------------
+from __future__ import print_function
+from pyspark.sql import Row
+from pyspark.sql import SparkSession
+from pyspark import SparkConf
+from pyspark.sql import SparkSession, HiveContext
+from pyspark.sql.types import *
+from pyspark.sql.functions import explode
+#spark = SparkSession.builder.getOrCreate()
+spark = SparkSession.builder.enableHiveSupport().getOrCreate()
+print("\n\n\n CHAT PROJECT \n")
+#Define the column names as id,chat,type
+udschema = StructType([StructField("ID",StringType(), True),
+StructField("CHAT",StringType(), True),
+StructField("TYPE",StringType(), True)])
+#Load the chat data into a Dataframe using ~ delimiter.
+hadooplines = spark.sparkContext.textFile("file:/home/hduser/latha/chattext.txt")
+parts = hadooplines.map(lambda l: l.split("~"))
+#Define the column names as id,chat,type
+#chatline = parts.map(lambda p: Row(ID = p[0],CHAT = p[1],TYPE = p[2]))
+#DF = spark.createDataFrame(parts,udschema)
+#DF = spark.createDataFrame(chatline)
+#Filter only the records contains type as c (which is the customer interactions)
+chatlinetypec = parts.filter(lambda l: l[2].upper() == 'C')
+DF = spark.createDataFrame(chatlinetypec,udschema)
+DF.show()
+#Remove the column type from the above dataframe, hence the resultant dataframe contains
+#only id and chat
+DF1 = DF.drop('TYPE')
+#convert to tempview
+DF1.createOrReplaceTempView("ChatTempView")
+#Use SQL split function on the chat column with the delimiter as space
+chat_split =spark.sql("SELECT ID, split(CHAT,' ') AS SPCHAT from ChatTempView")
+chat_split.show()
+#Use SQL explode function to pivot for example if we have splitted chat data looks like this
+#id,chat_split
+Exp_chat_split_DF = chat_split.select(chat_split.ID, explode(chat_split.SPCHAT))
+Exp_chat_split_DF.createOrReplaceTempView("ExpChatTempView")
+ECTP = spark.sql("SELECT * FROM ExpChatTempView")
+ECTP.show()
+#chat_split = chatlinetypec.map(lambda a: a[1].split(" "))
+#chat_split.foreach(print)
+#Load the stopwords into dataframe with the column name stopword and convert to tempview
+#stopwordRDD = spark.sparkContext.textFile("file:/home/hduser/latha/Stopwords.txt")
+swschema = StructType([StructField("STOPWORD",StringType(), True)])
+#stopwordDF = spark.createDataFrame(stopwordRDD,swschema)
+stopwordDF = spark.read.load("file:/home/hduser/latha/Stopwords.csv",format="csv",header="False",schema=swschema)
+stopwordDF.createOrReplaceTempView("StopwordView")
+SWDF = spark.sql("SELECT * FROM StopwordView")
+SWDF.show()
+#Write a left outer join between chat tempview and stopwords tempview and filter all nulls (or) use
+#subquery with not in option to filter all stop words from the actual chat tempview using the
+#stopwords tempview created above.
+CleanChat = spark.sql("SELECT * FROM ExpChatTempView where col NOT IN (SELECT * FROM StopwordView)")
+CleanChat.show()
+oad the final result into a hive table should have only result as given below using append option
+spark.sql("show databases").show()
+spark.sql("use sparkdb")
+spark.sql("drop table if exists Finalchat")
+spark.sql("create table if not exists Finalchat AS SELECT * FROM ExpChatTempView where col NOT IN (SELECT * FROM StopwordView)")
+spark.sql("SELECT * FROM Finalchat").show()
+#Identify the most recurring keywords used by the customer in all the chats by grouping based on
+#the keywords used with count of keywords. use group by and count functions in the sql
+spark.sql("SELECT count(id), col FROM Finalchat GROUP BY col").show()
+DF.show()
+
