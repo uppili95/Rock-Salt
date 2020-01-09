@@ -1,13 +1,5 @@
 ----------------------------Chat Project --------------------------
 
------------------------------Input Data ----------------------------
-1~hi~c
-100~hello morning, how can i help you today~a
-1~i have issues in my tv connection which is notworking~c
-100~I m really sorry about that. Tell me what happened~a
-1~heavy rain in the morning caused my stb and my tv is notworking~c
-100~let me take your request, hopefully your issue will be resolved soon~a
-
 ------------------------------Code + execution results side by side ---------------------
 from __future__ import print_function
 from pyspark.sql import Row
