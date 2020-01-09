@@ -118,7 +118,7 @@ SWDF.show()
 | another|
 |     any|
 +--------+
-only showing top 20 rows
+showing top 20 rows
 
 #Write a left outer join between chat tempview and stopwords tempview and filter all nulls (or) use
 #subquery with not in option to filter all stop words from the actual chat tempview using the
